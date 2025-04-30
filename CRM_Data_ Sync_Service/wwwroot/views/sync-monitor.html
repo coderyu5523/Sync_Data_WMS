@@ -1,0 +1,30 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+    <title>Sync Status Monitor</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/5.0.9/signalr.min.js"></script>
+</head>
+<body>
+    <h1>동기화 작업 모니터링</h1>
+    <div id="status">작업 상태: 대기 중</div>
+    <div id="performance">성능 지표: -</div>
+
+    <script>
+        const connection = new signalR.HubConnectionBuilder()
+            .withUrl("/syncStatusHub")
+            .build();
+
+        connection.on("ReceiveStatusUpdate", function (status) {
+            document.getElementById("status").innerText = `작업 상태: ${status}`;
+        });
+
+        connection.on("ReceivePerformanceMetrics", function (metrics) {
+            document.getElementById("performance").innerText = `성능 지표: ${metrics}`;
+        });
+
+        connection.start().catch(function (err) {
+            return console.error(err.toString());
+        });
+    </script>
+</body>
+</html>

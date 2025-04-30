@@ -1,0 +1,348 @@
+
+
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body {
+                    font-size: 16px;
+                }
+                .red
+                {
+                    color:red;
+                    font-weight: 600;
+                    text-align: center;
+                     font-size: 17px;
+                }
+                .header
+                {
+                    font-size: 19px;
+                    font-weight: 600;                   
+                }
+                strong
+                {
+                    font-size: 19px;                    
+                }
+                h3,h4
+                {
+                    font-size: 21px;
+                    font-weight: 600;                   
+                }
+            </style>
+        </head>
+        <body>
+      
+<h3>개선된 코드</h3>
+<pre><code class="language-csharp">using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Data.SqlClient;
+using System.Threading.Tasks;
+
+namespace DioImplant_batch
+{
+    public class DataSyncLogProcessor
+    {
+        public static Destination_Svr des_db = new Destination_Svr();
+        public static Source_Svr src_db = new Source_Svr();
+        public static XmlToSQLScript xmlToSQLScript = new XmlToSQLScript();
+
+        private string localConnectionString = &quot;&quot;;
+        private string remoteConnectionString = &quot;&quot;;
+
+        private const int BatchSize = 100; // 배치로 처리할 로그 수
+        private const int MaxRetryAttempts = 3; // 재시도 횟수
+        private const int RetryDelayMilliseconds = 2000; // 재시도 대기 시간 (밀리초)
+
+        public DataSyncLogProcessor()
+        {
+            InitMsDb();
+        }
+
+        // Config 파일 DB정보 값으로 ERP, Local DB 접속 설정
+        private void InitMsDb()
+        {
+            string src_dbIp = &quot;192.168.10.152&quot;;
+            string des_dbIp = &quot;192.168.10.155&quot;;
+            string dbId = &quot;erp&quot;;
+            string dbPw = &quot;itsp@7735&quot;;
+
+            localConnectionString = Setting(src_dbIp, dbId, dbPw, &quot;smart_db_ir&quot;, &quot;1616&quot;);
+            remoteConnectionString = Setting(des_dbIp, dbId, dbPw, &quot;smart_db&quot;, &quot;1616&quot;);
+        }
+
+        public string Setting(string ip = &quot;localhost&quot;, string id = &quot;sa&quot;, string password = &quot;1234&quot;, string dbName = &quot;dio_implant&quot;, string port = &quot;1433&quot;)
+        {
+            string dbConn = &quot;SERVER=&quot; + ip + &quot;,&quot; + port + &quot;;&quot; +
+                            &quot;DATABASE=&quot; + dbName + &quot;;&quot; +
+                            &quot;UID=&quot; + id + &quot;;&quot; +
+                            &quot;PWD=&quot; + password + &quot;;&quot; +
+                            &quot;Connection Timeout=10&quot;;
+            return dbConn;
+        }
+
+        public async Task ProcessLogsAsync()
+        {
+            List&lt;int&gt; processedLogIds = new List&lt;int&gt;();
+            DataTable logData = LoadLogs(BatchSize);
+
+            if (logData.Rows.Count == 0)
+            {
+                Console.WriteLine(&quot;No logs to process.&quot;);
+                return;
+            }
+
+            try
+            {
+                bool isProcessed = await ApplyBatchToRemoteDatabaseAsync(logData);
+
+                if (isProcessed)
+                {
+                    // 처리된 로그의 상태를 업데이트
+                    MarkLogsAsProcessed(processedLogIds);
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError($&quot;Error processing batch: {ex.Message}&quot;);
+                Console.WriteLine($&quot;Error processing batch: {ex.Message}&quot;);
+            }
+        }
+
+        public async void Batch_DataGet()
+        {
+            await ProcessLogsAsync();
+        }
+
+        private DataTable LoadLogs(int batchSize)
+        {
+            DataTable logData = new DataTable();
+
+            using (SqlConnection connection = new SqlConnection(localConnectionString))
+            {
+                connection.Open();
+                string query = &quot;SELECT TOP (@BatchSize) LogId, TableName, ChangeType, ChangeDetails FROM batch_ChangeLog WHERE Processed = 0&quot;;
+
+                using (SqlCommand command = new SqlCommand(query, connection))
+                {
+                    command.Parameters.AddWithValue(&quot;@BatchSize&quot;, batchSize);
+
+                    using (SqlDataAdapter adapter = new SqlDataAdapter(command))
+                    {
+                        adapter.Fill(logData);
+                    }
+                }
+            }
+
+            return logData;
+        }
+
+        private async Task&lt;bool&gt; ApplyBatchToRemoteDatabaseAsync(DataTable logData)
+        {
+            using (SqlConnection connection = new SqlConnection(remoteConnectionString))
+            {
+                if (!IsConnectionActive(connection))
+                {
+                    Console.WriteLine(&quot;Destination database connection is inactive. Retrying in next cycle.&quot;);
+                    return false; // 연결이 비활성화된 경우
+                }
+
+                await connection.OpenAsync();
+
+                using (SqlTransaction transaction = connection.BeginTransaction())
+                {
+                    try
+                    {
+                        foreach (DataRow row in logData.Rows)
+                        {
+                            string tableName = row[&quot;TableName&quot;].ToString();
+                            string changeType = row[&quot;ChangeType&quot;].ToString();
+                            string changeDetails = row[&quot;ChangeDetails&quot;].ToString();
+
+                            (Dictionary&lt;string, string&gt; fieldTypes, string primaryKey) = GetFieldTypesAndPrimaryKeyFromDatabase(tableName, localConnectionString);
+
+                            string queryText = &quot;&quot;;
+                            if (changeType.ToUpper() == &quot;INSERT&quot;)
+                            {
+                                queryText = xmlToSQLScript.GenerateInsertSql(changeDetails, tableName, fieldTypes);
+                            }
+                            else if (changeType.ToUpper() == &quot;UPDATE&quot;)
+                            {
+                                queryText = xmlToSQLScript.GenerateUpdateSql(changeDetails, tableName, primaryKey, fieldTypes);
+                            }
+
+                            if (!IsQuerySafe(queryText))
+                            {
+                                throw new InvalidOperationException(&quot;Unsafe query detected&quot;);
+                            }
+
+                            await ExecuteQueryWithRetriesAsync(connection, queryText, transaction);
+                        }
+
+                        transaction.Commit();
+                        Console.WriteLine(&quot;Batch processed successfully.&quot;);
+                        return true;
+                    }
+                    catch (Exception ex)
+                    {
+                        transaction.Rollback();
+                        Console.WriteLine($&quot;Transaction rolled back due to error: {ex.Message}&quot;);
+                        LogError($&quot;Transaction error: {ex.Message}&quot;);
+                        return false;
+                    }
+                }
+            }
+        }
+
+        private (Dictionary&lt;string, string&gt;, string) GetFieldTypesAndPrimaryKeyFromDatabase(string tableName, string connstr)
+        {
+            Dictionary&lt;string, string&gt; fieldTypes = new Dictionary&lt;string, string&gt;();
+            string primaryKey = &quot;&quot;;
+
+            using (SqlConnection connection = new SqlConnection(connstr))
+            {
+                connection.Open();
+
+                string columnQuery = &quot;SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = @TableName&quot;;
+                using (SqlCommand columnCommand = new SqlCommand(columnQuery, connection))
+                {
+                    columnCommand.Parameters.AddWithValue(&quot;@TableName&quot;, tableName);
+
+                    using (SqlDataReader reader = columnCommand.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            string columnName = reader[&quot;COLUMN_NAME&quot;].ToString();
+                            string dataType = reader[&quot;DATA_TYPE&quot;].ToString();
+                            fieldTypes[columnName] = dataType;
+                        }
+                    }
+                }
+
+                string pkQuery = @&quot;
+                    SELECT column_name
+                    FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS TC
+                    JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE KU
+                    ON TC.CONSTRAINT_NAME = KU.CONSTRAINT_NAME
+                    WHERE TC.TABLE_NAME = @TableName AND TC.CONSTRAINT_TYPE = &#39;PRIMARY KEY&#39;&quot;;
+
+                using (SqlCommand pkCommand = new SqlCommand(pkQuery, connection))
+                {
+                    pkCommand.Parameters.AddWithValue(&quot;@TableName&quot;, tableName);
+
+                    using (SqlDataReader reader = pkCommand.ExecuteReader())
+                    {
+                        if (reader.Read())
+                        {
+                            primaryKey = reader[&quot;column_name&quot;].ToString();
+                        }
+                    }
+                }
+            }
+
+            return (fieldTypes, primaryKey);
+        }
+
+        private async Task ExecuteQueryWithRetriesAsync(SqlConnection connection, string queryText, SqlTransaction transaction)
+        {
+            int retryCount = 0;
+
+            while (retryCount &lt; MaxRetryAttempts)
+            {
+                try
+                {
+                    using (SqlCommand command = new SqlCommand(queryText, connection, transaction))
+                    {
+                        await command.ExecuteNonQueryAsync();
+                    }
+
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    retryCount++;
+
+                    if (retryCount &gt;= MaxRetryAttempts)
+                    {
+                        LogError($&quot;Failed to execute query after {MaxRetryAttempts} attempts: {ex.Message}&quot;);
+                        throw new Exception($&quot;Failed to execute query after {MaxRetryAttempts} attempts: {ex.Message}&quot;);
+                    }
+
+                    Console.WriteLine($&quot;Retrying... Attempt {retryCount}&quot;);
+                    await Task.Delay(RetryDelayMilliseconds);
+                }
+            }
+        }
+
+        private bool IsConnectionActive(SqlConnection connection)
+        {
+            try
+            {
+                connection.Open();
+                connection.Close();
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private bool IsQuerySafe(string queryText)
+        {
+            string lowerQuery = queryText.ToLower();
+            return !(lowerQuery.Contains(&quot;drop&quot;) || lowerQuery.Contains(&quot;delete *&quot;));
+        }
+
+        private void MarkLogsAsProcessed(List&lt;int&gt; logIds)
+        {
+            using (SqlConnection connection = new SqlConnection(localConnectionString))
+            {
+                connection.Open();
+
+                string query = &quot;UPDATE batch_ChangeLog SET Processed = 1 WHERE LogId IN (&quot; + string.Join(&quot;,&quot;, logIds) + &quot;)&quot;;
+                using (SqlCommand command = new SqlCommand(query, connection))
+                {
+                    command.ExecuteNonQuery();
+                }
+            }
+        }
+
+        private void LogError(string message)
+        {
+            using (SqlConnection connection = new SqlConnection(localConnectionString))
+            {
+                try
+                {
+                    connection.Open();
+                    string logCommand = &quot;INSERT INTO ErrorLog (ErrorMessage, ErrorDate) VALUES (@ErrorMessage, GETDATE())&quot;;
+                    using (SqlCommand command = new SqlCommand(logCommand, connection))
+                    {
+                        command.Parameters.AddWithValue(&quot;@ErrorMessage&quot;, message);
+                        command.ExecuteNonQuery();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($&quot;Failed to log error: {ex.Message}&quot;);
+                }
+            }
+        }
+    }
+}</code></pre>
+<h3>주요 개선사항</h3>
+<ol>
+<li><p><strong>데이터베이스 연결 상태 확인</strong>: <code>IsConnectionActive</code> 메서드를 통해 데이터베이스 연결 상태를 확인합니다. 연결이 비활성화된 경우, 동기화 작업을 다음 주기로 미룹니다.</p>
+</li>
+<li><p>**오</p>
+</li>
+</ol>
+<p>류 처리 및 재시도 로직 추가**: <code>ExecuteQueryWithRetriesAsync</code> 메서드에서 SQL 명령 실행 시 오류가 발생하면 재시도하고, 재시도 한계를 넘으면 로그를 기록합니다.</p>
+<ol start="3">
+<li><strong>오류 로그 기록</strong>: <code>LogError</code> 메서드를 사용해 오류가 발생할 경우, 해당 오류를 <code>ErrorLog</code> 테이블에 기록합니다.</li>
+</ol>
+<p>이렇게 수정된 코드는 데이터베이스 연결 상태를 관리하고, 오류 발생 시 재시도를 수행하며, 필요 시 로그를 기록하여 안정성을 높입니다.</p>
+
+        </body>
+        </html>
+        

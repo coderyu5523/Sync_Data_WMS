@@ -1,0 +1,146 @@
+[
+  {
+    "ScheduleId": 0,
+    "TaskId": 1,
+    "SrtDate": "2024-10-30",
+    "ScheduleType": "Recurring",
+    "SpecificTime": null,
+    "Interval": "00:10:00",
+    "WeekDay": null
+  },
+  {
+    "ScheduleId": 0,
+    "TaskId": 2,
+    "SrtDate": "2024-10-30",
+    "ScheduleType": "Recurring",
+    "SpecificTime": null,
+    "Interval": "00:10:00",
+    "WeekDay": null
+  },
+  {
+    "ScheduleId": 0,
+    "TaskId": 3,
+    "SrtDate": "2024-10-16",
+    "ScheduleType": "Recurring",
+    "SpecificTime": null,
+    "Interval": "00:10:00",
+    "WeekDay": null
+  },
+  {
+    "ScheduleId": 0,
+    "TaskId": 4,
+    "SrtDate": "2024-10-16",
+    "ScheduleType": "Recurring",
+    "SpecificTime": null,
+    "Interval": "01:00:00",
+    "WeekDay": null
+  },
+  {
+    "ScheduleId": 0,
+    "TaskId": 5,
+    "SrtDate": "2024-10-16",
+    "ScheduleType": "Recurring",
+    "SpecificTime": null,
+    "Interval": "01:00:00",
+    "WeekDay": null
+  },
+  {
+    "ScheduleId": 0,
+    "TaskId": 6,
+    "SrtDate": "2024-10-16",
+    "ScheduleType": "Recurring",
+    "SpecificTime": null,
+    "Interval": "01:00:00",
+    "WeekDay": null
+  },
+  {
+    "ScheduleId": 0,
+    "TaskId": 7,
+    "SrtDate": "2024-10-16",
+    "ScheduleType": "Recurring",
+    "SpecificTime": null,
+    "Interval": "01:00:00",
+    "WeekDay": null
+  },
+  {
+    "ScheduleId": 0,
+    "TaskId": 8,
+    "SrtDate": "2024-10-22",
+    "ScheduleType": "Daily",
+    "SpecificTime": "2024-10-22T07:00:00",
+    "Interval": null,
+    "WeekDay": null
+  },
+  {
+    "ScheduleId": 0,
+    "TaskId": 9,
+    "SrtDate": "2024-10-22",
+    "ScheduleType": "Recurring",
+    "SpecificTime": null,
+    "Interval": "01:00:00",
+    "WeekDay": null
+  },
+  {
+    "ScheduleId": 0,
+    "TaskId": 10,
+    "SrtDate": "2024-10-22",
+    "ScheduleType": "Recurring",
+    "SpecificTime": null,
+    "Interval": "01:00:00",
+    "WeekDay": null
+  },
+  {
+    "ScheduleId": 0,
+    "TaskId": 11,
+    "SrtDate": "2024-10-22",
+    "ScheduleType": "Daily",
+    "SpecificTime": "2024-10-22T06:57:00",
+    "Interval": null,
+    "WeekDay": null
+  },
+  {
+    "ScheduleId": 0,
+    "TaskId": 12,
+    "SrtDate": "2024-10-22",
+    "ScheduleType": "Daily",
+    "SpecificTime": "2024-10-22T06:58:00",
+    "Interval": null,
+    "WeekDay": null
+  },
+  {
+    "ScheduleId": 0,
+    "TaskId": 13,
+    "SrtDate": "2024-10-24",
+    "ScheduleType": "Recurring",
+    "SpecificTime": null,
+    "Interval": "01:00:00",
+    "WeekDay": null
+  },
+  {
+    "ScheduleId": 0,
+    "TaskId": 14,
+    "SrtDate": "2024-10-24",
+    "ScheduleType": "Recurring",
+    "SpecificTime": null,
+    "Interval": "01:00:00",
+    "WeekDay": null
+  },
+  {
+    "ScheduleId": 0,
+    "TaskId": 15,
+    "SrtDate": "2024-10-30",
+    "ScheduleType": "Recurring",
+    "SpecificTime": null,
+    "Interval": "00:10:00",
+    "WeekDay": null
+  },
+  {
+    "ScheduleId": 0,
+    "TaskId": 16,
+    "SrtDate": "2024-10-30",
+    "ScheduleType": "Recurring",
+    "SpecificTime": null,
+    "Interval": "00:10:00",
+    "WeekDay": null
+  }
+]

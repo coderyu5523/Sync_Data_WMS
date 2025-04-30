@@ -1,0 +1,279 @@
+
+
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body {
+                    font-size: 16px;
+                }
+                .red
+                {
+                    color:red;
+                    font-weight: 600;
+                    text-align: center;
+                     font-size: 17px;
+                }
+                .header
+                {
+                    font-size: 19px;
+                    font-weight: 600;                   
+                }
+                strong
+                {
+                    font-size: 19px;                    
+                }
+                h3,h4
+                {
+                    font-size: 21px;
+                    font-weight: 600;                   
+                }
+            </style>
+        </head>
+        <body>
+      <p>동기화 작업을 실시간으로 모니터링하고 각 작업의 상태를 표시하며 결과와 성능 지표를 기록하는 기능을 구현하기 위해, <strong>ASP.NET Core</strong>의 <strong>SignalR</strong>을 사용하여 클라이언트와 서버 간의 실시간 통신을 설정할 수 있습니다. 이 방법을 사용하면 작업의 상태를 실시간으로 웹 대시보드에 표시하고, 결과와 성능 지표(예: 처리 속도)를 기록할 수 있습니다.</p>
+<h3>구현 계획</h3>
+<ol>
+<li><strong>SignalR 설정</strong>: 서버에서 클라이언트로 실시간 메시지를 전송하기 위해 SignalR을 설정합니다.</li>
+<li><strong>작업 상태 전송</strong>: 동기화 작업의 상태 변경 시 서버에서 클라이언트로 실시간 메시지를 전송하여 작업 상태를 업데이트합니다.</li>
+<li><strong>성능 지표 기록</strong>: 각 작업의 처리 속도와 결과를 기록하여 클라이언트에 전송합니다.</li>
+</ol>
+<h3>단계별 구현</h3>
+<h4>1. <strong>SignalR 설정</strong></h4>
+<p>먼저, ASP.NET Core 웹 응용 프로그램에 SignalR을 설정합니다.</p>
+<h5>1-1. <strong>SignalR 패키지 설치</strong></h5>
+<p>프로젝트에 SignalR 패키지를 설치합니다.</p>
+<pre><code class="language-bash">dotnet add package Microsoft.AspNetCore.SignalR</code></pre>
+<h5>1-2. <strong>SignalR Hub 클래스 생성</strong></h5>
+<p>SignalR 허브(Hub)는 클라이언트와 서버 간의 실시간 통신을 관리하는 클래스입니다.</p>
+<pre><code class="language-csharp">using Microsoft.AspNetCore.SignalR;
+using System.Threading.Tasks;
+
+public class SyncStatusHub : Hub
+{
+    // 클라이언트에 메시지를 전송하는 메서드
+    public async Task SendStatusUpdate(string status)
+    {
+        await Clients.All.SendAsync(&quot;ReceiveStatusUpdate&quot;, status);
+    }
+
+    // 성능 지표 전송 메서드
+    public async Task SendPerformanceMetrics(string metrics)
+    {
+        await Clients.All.SendAsync(&quot;ReceivePerformanceMetrics&quot;, metrics);
+    }
+}</code></pre>
+<h5>1-3. <strong><code>Startup.cs</code> 또는 <code>Program.cs</code> 파일에서 SignalR 설정</strong></h5>
+<p>SignalR 허브를 서비스로 추가하고, 엔드포인트를 설정합니다.</p>
+<pre><code class="language-csharp">using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.DependencyInjection;
+
+public class Startup
+{
+    public void ConfigureServices(IServiceCollection services)
+    {
+        services.AddRazorPages();
+        services.AddSignalR(); // SignalR 서비스 추가
+    }
+
+    public void Configure(IApplicationBuilder app)
+    {
+        app.UseRouting();
+
+        app.UseEndpoints(endpoints =&gt;
+        {
+            endpoints.MapRazorPages();
+            endpoints.MapHub&lt;SyncStatusHub&gt;(&quot;/syncStatusHub&quot;); // SignalR 허브 엔드포인트 설정
+        });
+    }
+}</code></pre>
+<h4>2. <strong>작업 상태 전송</strong></h4>
+<p><code>DataSyncLogProcessor</code> 클래스에서 동기화 작업의 상태가 변경될 때마다 SignalR 허브를 통해 클라이언트에 실시간으로 상태를 전송합니다.</p>
+<h5>2-1. <strong><code>DataSyncLogProcessor</code> 클래스 수정</strong></h5>
+<p><code>SyncStatusHub</code>를 사용하여 작업 상태와 성능 지표를 클라이언트에 전송합니다.</p>
+<pre><code class="language-csharp">using Microsoft.AspNetCore.SignalR;
+using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Data.SqlClient;
+using System.Threading.Tasks;
+
+public class DataSyncLogProcessor
+{
+    private readonly IHubContext&lt;SyncStatusHub&gt; _hubContext;
+    private readonly Logger _logger;
+
+    public DataSyncLogProcessor(IHubContext&lt;SyncStatusHub&gt; hubContext, string connectionString)
+    {
+        _hubContext = hubContext;
+        _logger = new Logger(connectionString);
+    }
+
+    public async Task ProcessLogsAsync()
+    {
+        List&lt;int&gt; processedLogIds = new List&lt;int&gt;();
+        DataTable logData = LoadLogs(BatchSize);
+
+        if (logData.Rows.Count == 0)
+        {
+            await _hubContext.Clients.All.SendAsync(&quot;ReceiveStatusUpdate&quot;, &quot;No logs to process.&quot;);
+            return;
+        }
+
+        try
+        {
+            string currentSqlQuery = null;
+            DateTime startTime = DateTime.Now; // 작업 시작 시간 기록
+            bool isProcessed = await ApplyBatchToRemoteDatabaseAsync(logData, processedLogIds, (sql) =&gt; currentSqlQuery = sql);
+
+            if (isProcessed)
+            {
+                MarkLogsAsProcessed(processedLogIds);
+                await _hubContext.Clients.All.SendAsync(&quot;ReceiveStatusUpdate&quot;, &quot;Batch processed successfully.&quot;);
+                _logger.LogOperation(&quot;Batch processed successfully.&quot;, currentSqlQuery);
+
+                DateTime endTime = DateTime.Now; // 작업 종료 시간 기록
+                TimeSpan processingTime = endTime - startTime;
+                string performanceMetrics = $&quot;Processed {processedLogIds.Count} logs in {processingTime.TotalSeconds} seconds.&quot;;
+                await _hubContext.Clients.All.SendAsync(&quot;ReceivePerformanceMetrics&quot;, performanceMetrics);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError($&quot;Error processing batch: {ex.Message}&quot;, currentSqlQuery);
+            await _hubContext.Clients.All.SendAsync(&quot;ReceiveStatusUpdate&quot;, $&quot;Error: {ex.Message}&quot;);
+        }
+    }
+}</code></pre>
+<h4>3. <strong>클라이언트에서 실시간 업데이트 처리</strong></h4>
+<p>클라이언트(웹 페이지)에서 SignalR을 사용하여 서버로부터 상태 업데이트와 성능 지표를 실시간으로 수신합니다.</p>
+<h5>3-1. <strong>JavaScript SignalR 클라이언트 설정</strong></h5>
+<p>웹 페이지에 SignalR 클라이언트를 설정하고, 서버로부터 업데이트를 수신하도록 스크립트를 추가합니다.</p>
+<pre><code class="language-html">&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+&lt;head&gt;
+    &lt;title&gt;Sync Status Monitor&lt;/title&gt;
+    &lt;script src=&quot;https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/5.0.9/signalr.min.js&quot;&gt;&lt;/script&gt;
+&lt;/head&gt;
+&lt;body&gt;
+    &lt;h1&gt;동기화 작업 모니터링&lt;/h1&gt;
+    &lt;div id=&quot;status&quot;&gt;작업 상태: 대기 중&lt;/div&gt;
+    &lt;div id=&quot;performance&quot;&gt;성능 지표: -&lt;/div&gt;
+
+    &lt;script&gt;
+        const connection = new signalR.HubConnectionBuilder()
+            .withUrl(&quot;/syncStatusHub&quot;)
+            .build();
+
+        connection.on(&quot;ReceiveStatusUpdate&quot;, function (status) {
+            document.getElementById(&quot;status&quot;).innerText = `작업 상태: ${status}`;
+        });
+
+        connection.on(&quot;ReceivePerformanceMetrics&quot;, function (metrics) {
+            document.getElementById(&quot;performance&quot;).innerText = `성능 지표: ${metrics}`;
+        });
+
+        connection.start().catch(function (err) {
+            return console.error(err.toString());
+        });
+    &lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;</code></pre>
+<h3>기능 설명</h3>
+<ol>
+<li><p><strong>SignalR 허브(SyncStatusHub)</strong>:</p>
+<ul>
+<li>서버에서 클라이언트로 실시간 메시지를 전송할 수 있는 허브를 설정합니다.</li>
+<li><code>SendStatusUpdate</code>와 <code>SendPerformanceMetrics</code> 메서드를 사용하여 작업 상태와 성능 지표를 전송합니다.</li>
+</ul>
+</li>
+<li><p><strong><code>DataSyncLogProcessor</code> 클래스</strong>:</p>
+<ul>
+<li>동기화 작업을 처리하면서 상태가 변경될 때마다 SignalR 허브를 통해 클라이언트에 실시간으로 업데이트를 전송합니다.</li>
+<li>작업 시작 및 종료 시간을 기록하고, 처리 속도와 같은 성능 지표를 계산하여 클라이언트에 전송합니다.</li>
+</ul>
+</li>
+<li><p><strong>클라이언트(JavaScript) 코드</strong>:</p>
+<ul>
+<li>SignalR 클라이언트를 설정하여 서버로부터 실시간으로 상태 업데이트와 성능 지표를 수신하고 이를 웹 페이지에 표시합니다.</li>
+</ul>
+</li>
+</ol>
+<h3>결론</h3>
+<p>이제 동기화 작업의 진행 상태를 실시간으로 모니터링하고, 각 작업의 상태와 성능 지표를 클라이언트에 실시간으로 표시할 수 있는 기능이 구현되었습니다. 추가적인 질문이나 구현에 관한 도움이 필요하면 언제든지 말씀해 주세요!</p>
+
+<p>현재 제공해주신 코드(<code>Program.cs</code>)에 SignalR을 설정하려면, 기존 백그라운드 서비스와 트랜지언트 서비스 등록 외에 <strong>SignalR 서비스를 추가하고</strong> 허브를 구성해야 합니다. SignalR을 사용하는 부분을 추가하기 위해 필요한 설정은 아래와 같습니다.</p>
+<h3>SignalR 설정을 위한 수정 사항</h3>
+<ol>
+<li><p><strong>SignalR 서비스 추가</strong>:</p>
+<ul>
+<li><code>ConfigureServices</code> 메서드에 <code>services.AddSignalR()</code>를 추가하여 SignalR 서비스를 설정합니다.</li>
+</ul>
+</li>
+<li><p><strong>SignalR 허브 엔드포인트 설정</strong>:</p>
+<ul>
+<li><code>ConfigureWebHostDefaults</code>에서 <code>MapHub</code> 메서드를 사용하여 SignalR 허브 엔드포인트를 지정합니다.</li>
+</ul>
+</li>
+</ol>
+<h3>수정된 <code>Program.cs</code> 예시</h3>
+<p>아래는 SignalR 설정이 포함된 수정된 <code>Program.cs</code>입니다:</p>
+<pre><code class="language-csharp">using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using DioImplant_batch; // SyncScheduler와 DataSyncLogProcessor가 정의된 네임스페이스
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+
+public class Program
+{
+    public static void Main(string[] args)
+    {
+        CreateHostBuilder(args).Build().Run();
+    }
+
+    public static IHostBuilder CreateHostBuilder(string[] args) =&gt;
+        Host.CreateDefaultBuilder(args)
+            .ConfigureWebHostDefaults(webBuilder =&gt;
+            {
+                webBuilder.ConfigureServices((hostContext, services) =&gt;
+                {
+                    services.AddHostedService&lt;SyncScheduler&gt;(); // SyncScheduler는 백그라운드 서비스
+                    services.AddTransient&lt;DataSyncLogProcessor&gt;(); // DataSyncLogProcessor는 트랜지언트 서비스로 등록
+
+                    services.AddSignalR(); // SignalR 서비스 추가
+                });
+
+                webBuilder.Configure(app =&gt;
+                {
+                    app.UseRouting();
+
+                    app.UseEndpoints(endpoints =&gt;
+                    {
+                        endpoints.MapHub&lt;SyncStatusHub&gt;(&quot;/syncStatusHub&quot;); // SignalR 허브 엔드포인트 설정
+                    });
+                });
+            });
+}</code></pre>
+<h3>설명</h3>
+<ol>
+<li><p><strong><code>services.AddSignalR()</code></strong>:</p>
+<ul>
+<li>SignalR 서비스를 DI(의존성 주입) 컨테이너에 등록하여 ASP.NET Core 응용 프로그램에서 사용할 수 있도록 합니다.</li>
+</ul>
+</li>
+<li><p><strong><code>webBuilder.Configure</code> 및 <code>app.UseEndpoints</code></strong>:</p>
+<ul>
+<li><code>MapHub&lt;SyncStatusHub&gt;(&quot;/syncStatusHub&quot;)</code>를 사용하여 SignalR 허브의 엔드포인트를 설정합니다. 이 엔드포인트는 클라이언트가 SignalR을 통해 서버와 실시간으로 통신할 때 사용됩니다.</li>
+</ul>
+</li>
+</ol>
+<h3>요약</h3>
+<ul>
+<li><strong>기존 프로젝트에 SignalR 설정을 추가하려면</strong>, <code>services.AddSignalR()</code>를 사용하여 SignalR 서비스를 추가하고, <code>MapHub</code> 메서드를 통해 허브 엔드포인트를 설정합니다.</li>
+<li>위와 같이 설정하면, 동기화 작업의 상태를 실시간으로 모니터링하고 클라이언트와의 실시간 통신이 가능해집니다.</li>
+</ul>
+<p>추가적인 질문이나 더 궁금한 점이 있으면 말씀해 주세요!</p>
+
+        </body>
+        </html>
+        

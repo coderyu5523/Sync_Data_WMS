@@ -1,0 +1,276 @@
+
+
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body {
+                    font-size: 16px;
+                }
+                .red
+                {
+                    color:red;
+                    font-weight: 600;
+                    text-align: center;
+                     font-size: 17px;
+                }
+                .header
+                {
+                    font-size: 19px;
+                    font-weight: 600;                   
+                }
+                strong
+                {
+                    font-size: 19px;                    
+                }
+                h3,h4
+                {
+                    font-size: 21px;
+                    font-weight: 600;                   
+                }
+            </style>
+        </head>
+        <body>
+      <ol start="4">
+<li>데이터베이스 연결 상태 및 오류 처리<br>구현 방법:</li>
+</ol>
+<p>데이터베이스 연결 상태를 확인하는 메서드를 추가합니다 (CheckConnectionStatus).<br>연결이 비활성화된 경우, 재연결 시도를 하거나 다음 동기화 주기로 대기하도록 합니다.<br>SQL 구문 실행 시 오류가 발생할 경우, 최대 3회 재시도를 하고, 실패 시 오류 로그 테이블(ErrorLog)에 오류 내용을 기록합니다.<br>모든 작업 로그를 기록하는 OperationLog 테이블을 생성하고, 주기적으로 로그를 삭제하는 작업을 추가합니다.<br>구체적 기능:</p>
+<p>오류 로그와 작업 로그를 관리하는 테이블 생성:<br>sql<br>코드 복사<br>CREATE TABLE ErrorLog (<br>    LogId INT IDENTITY(1,1) PRIMARY KEY,<br>    ErrorMessage NVARCHAR(MAX),<br>    ErrorDate DATETIME DEFAULT GETDATE(),<br>    SqlQuery NVARCHAR(MAX)<br>);</p>
+<p>CREATE TABLE OperationLog (<br>    LogId INT IDENTITY(1,1) PRIMARY KEY,<br>    OperationDetails NVARCHAR(MAX),<br>    OperationDate DATETIME DEFAULT GETDATE()<br>);<br>오류 발생 시 LogError 메서드를 통해 ErrorLog 테이블에 기록하고, 작업 내용은 OperationLog에 기록합니다.<br>RetryPolicy를 구현하여 재시도 로직을 추가합니다.</p>
+<p>로그 클래스 이용</p>
+<p><code>LogOperation</code>과 <code>LogError</code> 메서드와 같은 로깅 관련 코드를 별도의 파일로 분리하면 코드의 모듈화가 개선되고, 코드 재사용성이 향상됩니다. 이러한 로깅 기능은 별도의 <strong>유틸리티 클래스</strong>로 분리하여 관리하는 것이 좋습니다.</p>
+<h3>1. <strong>새로운 로깅 유틸리티 클래스 생성</strong></h3>
+<p>먼저, <code>Logger</code>라는 이름의 새로운 클래스를 생성하여 로깅 기능을 분리합니다. 이 클래스는 데이터베이스 연결 문자열을 전달받아 사용하며, <code>LogOperation</code>과 <code>LogError</code> 메서드를 제공합니다.</p>
+<h4><code>Logger.cs</code> 파일</h4>
+<pre><code class="language-csharp">using System;
+using System.Data.SqlClient;
+
+namespace DioImplant_batch
+{
+    public class Logger
+    {
+        private readonly string _connectionString;
+
+        public Logger(string connectionString)
+        {
+            _connectionString = connectionString;
+        }
+
+        // 작업 로그를 기록하는 메서드
+        public void LogOperation(string message)
+        {
+            using (SqlConnection connection = new SqlConnection(_connectionString))
+            {
+                try
+                {
+                    connection.Open();
+                    string logCommand = &quot;INSERT INTO OperationLog (OperationDetails, OperationDate) VALUES (@OperationDetails, GETDATE())&quot;;
+                    using (SqlCommand command = new SqlCommand(logCommand, connection))
+                    {
+                        command.Parameters.AddWithValue(&quot;@OperationDetails&quot;, message);
+                        command.ExecuteNonQuery();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($&quot;Failed to log operation: {ex.Message}&quot;);
+                }
+            }
+        }
+
+        // 오류 로그 기록 메서드
+        public void LogError(string message)
+        {
+            using (SqlConnection connection = new SqlConnection(_connectionString))
+            {
+                try
+                {
+                    connection.Open();
+                    string logCommand = &quot;INSERT INTO ErrorLog (ErrorMessage, ErrorDate) VALUES (@ErrorMessage, GETDATE())&quot;;
+                    using (SqlCommand command = new SqlCommand(logCommand, connection))
+                    {
+                        command.Parameters.AddWithValue(&quot;@ErrorMessage&quot;, message);
+                        command.ExecuteNonQuery();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($&quot;Failed to log error: {ex.Message}&quot;);
+                }
+            }
+        }
+    }
+}</code></pre>
+<h3>2. <strong><code>DataSyncLogProcessor</code> 클래스에서 <code>Logger</code> 클래스 사용</strong></h3>
+<p>이제 <code>Logger</code> 클래스를 사용하도록 <code>DataSyncLogProcessor</code> 클래스를 수정합니다. <code>DataSyncLogProcessor</code>는 <code>Logger</code> 클래스의 인스턴스를 생성하여 로그를 기록합니다.</p>
+<h4><code>DataSyncLogProcessor</code> 클래스 수정</h4>
+<pre><code class="language-csharp">using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Data.SqlClient;
+using System.Threading.Tasks;
+
+namespace DioImplant_batch
+{
+    public class DataSyncLogProcessor
+    {
+        public static Destination_Svr des_db = new Destination_Svr();
+        public static Source_Svr src_db = new Source_Svr();
+        public static XmlToSQLScript xmlToSQLScript = new XmlToSQLScript();
+
+        private string localConnectionString = &quot;&quot;;
+        private string remoteConnectionString = &quot;&quot;;
+
+        private const int BatchSize = 100; // 배치로 처리할 로그 수
+        private const int MaxRetryAttempts = 3; // 재시도 횟수
+        private const int RetryDelayMilliseconds = 2000; // 재시도 대기 시간 (밀리초)
+
+        private readonly Logger _logger; // Logger 인스턴스 추가
+
+        public DataSyncLogProcessor()
+        {
+            InitMsDb();
+            _logger = new Logger(localConnectionString); // Logger 인스턴스 생성
+        }
+
+        // Config 파일 DB정보 값으로 ERP, Local DB 접속 설정
+        private void InitMsDb()
+        {
+            string src_dbIp = &quot;192.168.10.152&quot;;
+            string des_dbIp = &quot;192.168.10.155&quot;;
+            string dbId = &quot;erp&quot;;
+            string dbPw = &quot;itsp@7735&quot;;
+
+            localConnectionString = Setting(src_dbIp, dbId, dbPw, &quot;smart_db_ir&quot;, &quot;1616&quot;);
+            remoteConnectionString = Setting(des_dbIp, dbId, dbPw, &quot;smart_db&quot;, &quot;1616&quot;);
+        }
+
+        public string Setting(string ip = &quot;localhost&quot;, string id = &quot;sa&quot;, string password = &quot;1234&quot;, string dbName = &quot;dio_implant&quot;, string port = &quot;1433&quot;)
+        {
+            string dbConn = &quot;SERVER=&quot; + ip + &quot;,&quot; + port + &quot;;&quot; +
+                            &quot;DATABASE=&quot; + dbName + &quot;;&quot; +
+                            &quot;UID=&quot; + id + &quot;;&quot; +
+                            &quot;PWD=&quot; + password + &quot;;&quot; +
+                            &quot;Connection Timeout=10&quot;;
+            return dbConn;
+        }
+
+        public async Task ProcessLogsAsync()
+        {
+            List&lt;int&gt; processedLogIds = new List&lt;int&gt;();
+            DataTable logData = LoadLogs(BatchSize);
+
+            if (logData.Rows.Count == 0)
+            {
+                Console.WriteLine(&quot;No logs to process.&quot;);
+                return;
+            }
+
+            try
+            {
+                bool isProcessed = await ApplyBatchToRemoteDatabaseAsync(logData, processedLogIds);
+
+                if (isProcessed)
+                {
+                    // 처리된 로그의 상태를 업데이트
+                    MarkLogsAsProcessed(processedLogIds);
+
+                    // 작업 로그 기록
+                    _logger.LogOperation(&quot;Batch processed successfully.&quot;);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($&quot;Error processing batch: {ex.Message}&quot;);
+                Console.WriteLine($&quot;Error processing batch: {ex.Message}&quot;);
+            }
+        }
+
+        // ApplyBatchToRemoteDatabaseAsync 메서드 수정하여 작업 로그를 기록합니다.
+        private async Task&lt;bool&gt; ApplyBatchToRemoteDatabaseAsync(DataTable logData, List&lt;int&gt; processedLogIds)
+        {
+            using (SqlConnection connection = new SqlConnection(remoteConnectionString))
+            {
+                if (!IsConnectionActive(connection))
+                {
+                    Console.WriteLine(&quot;Destination database connection is inactive. Retrying in next cycle.&quot;);
+                    return false; // 연결이 비활성화된 경우
+                }
+
+                await connection.OpenAsync();
+
+                using (SqlTransaction transaction = connection.BeginTransaction())
+                {
+                    try
+                    {
+                        foreach (DataRow row in logData.Rows)
+                        {
+                            string tableName = row[&quot;TableName&quot;].ToString();
+                            string changeType = row[&quot;ChangeType&quot;].ToString();
+                            string changeDetails = row[&quot;ChangeDetails&quot;].ToString();
+                            int logId = Convert.ToInt32(row[&quot;LogId&quot;]); // 로그 ID 가져오기
+
+                            (Dictionary&lt;string, string&gt; fieldTypes, string primaryKey) = GetFieldTypesAndPrimaryKeyFromDatabase(tableName, localConnectionString);
+
+                            string queryText = &quot;&quot;;
+                            if (changeType.ToUpper() == &quot;INSERT&quot;)
+                            {
+                                queryText = xmlToSQLScript.GenerateInsertSql(changeDetails, tableName, fieldTypes);
+                            }
+                            else if (changeType.ToUpper() == &quot;UPDATE&quot;)
+                            {
+                                queryText = xmlToSQLScript.GenerateUpdateSql(changeDetails, tableName, primaryKey, fieldTypes);
+                            }
+
+                            if (!IsQuerySafe(queryText))
+                            {
+                                throw new InvalidOperationException(&quot;Unsafe query detected&quot;);
+                            }
+
+                            await ExecuteQueryWithRetriesAsync(connection, queryText, transaction);
+
+                            // 로그가 성공적으로 처리된 경우 processedLogIds에 추가
+                            processedLogIds.Add(logId);
+                        }
+
+                        transaction.Commit();
+                        Console.WriteLine(&quot;Batch processed successfully.&quot;);
+
+                        // 작업 로그 기록
+                        _logger.LogOperation(&quot;Batch processed successfully.&quot;);
+                        return true;
+                    }
+                    catch (Exception ex)
+                    {
+                        transaction.Rollback();
+                        Console.WriteLine($&quot;Transaction rolled back due to error: {ex.Message}&quot;);
+                        _logger.LogError($&quot;Transaction error: {ex.Message}&quot;);
+                        return false;
+                    }
+                }
+            }
+        }
+
+        // 기타 메서드 (생략)...
+    }
+}</code></pre>
+<h3>변경 사항 요약</h3>
+<ol>
+<li><strong><code>Logger</code> 클래스 생성</strong>: 로깅 관련 기능을 모듈화하기 위해 <code>Logger</code> 클래스를 생성하고 <code>LogOperation</code>과 <code>LogError</code> 메서드를 이 클래스에 포함시켰습니다.</li>
+<li><strong><code>DataSyncLogProcessor</code> 클래스 수정</strong>:<ul>
+<li><code>Logger</code> 클래스의 인스턴스를 생성하여 로깅 기능을 사용하도록 변경했습니다.</li>
+<li>각 작업의 성공과 실패 시점에서 <code>Logger</code> 클래스의 메서드를 호출하여 로그를 기록합니다.</li>
+</ul>
+</li>
+</ol>
+<h3>장점</h3>
+<ul>
+<li><strong>코드 모듈화</strong>: 로깅 기능이 별도의 클래스로 분리되어, 코드가 더 깔끔하고 유지 보수가 쉬워집니다.</li>
+<li><strong>재사용성</strong>: <code>Logger</code> 클래스를 다른 클래스나 프로젝트에서도 쉽게 재사용할 수 있습니다.</li>
+<li><strong>유지 보수성</strong>: 로깅 로직을 변경해야 할 경우, 한 곳에서만 수정하면 됩니다.</li>
+</ul>
+<p>이제 <code>Logger</code> 클래스를 별도의 파일로 관리하면서 <code>DataSyncLogProcessor</code> 클래스에서 사용할 수 있게 되었습니다. 추가적으로 질문이 있거나 다른 요구사항이 있으시면 언제든지 말씀해 주세요!</p>
+
+        </body>
+        </html>
+        
