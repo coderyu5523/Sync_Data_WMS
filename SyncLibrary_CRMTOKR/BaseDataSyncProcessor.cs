@@ -159,133 +159,7 @@ namespace SyncLibrary
             return (fieldTypes, primaryKeys);
         }
 
-        //protected (Dictionary<string, (string DataType, int? MaxLength, int? Precision, int? Scale)>, List<string>) GetFieldTypesAndPrimaryKeyFromDatabase(string tableName, string connstr)
-        //{
-        //    var fieldTypes = new Dictionary<string, (string DataType, int? MaxLength, int? Precision, int? Scale)>();
-        //    List<string> primaryKeys = new List<string>();
 
-        //    using (SqlConnection connection = new SqlConnection(connstr))
-        //    {
-        //        connection.Open();
-
-        //        string columnQuery = "SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = @TableName";
-        //        using (SqlCommand columnCommand = new SqlCommand(columnQuery, connection))
-        //        {
-        //            columnCommand.Parameters.AddWithValue("@TableName", tableName);
-
-        //            using (SqlDataReader reader = columnCommand.ExecuteReader())
-        //            {
-        //                while (reader.Read())
-        //                {
-        //                    string columnName = reader["COLUMN_NAME"].ToString();
-        //                    string dataType = reader["DATA_TYPE"].ToString();
-        //                    int? maxLength = reader.IsDBNull(reader.GetOrdinal("CHARACTER_MAXIMUM_LENGTH"))
-        //                        ? (int?)null
-        //                        : reader.GetInt32(reader.GetOrdinal("CHARACTER_MAXIMUM_LENGTH"));
-        //                    int? precision = reader.IsDBNull(reader.GetOrdinal("NUMERIC_PRECISION"))
-        //                                    ? (int?)null
-        //                                    : reader.GetByte(reader.GetOrdinal("NUMERIC_PRECISION"));
-        //                    int? scale = reader.IsDBNull(reader.GetOrdinal("NUMERIC_SCALE"))
-        //                                ? (int?)null
-        //                                : reader.GetInt32(reader.GetOrdinal("NUMERIC_SCALE"));
-
-        //                    fieldTypes[columnName] = (dataType, maxLength, precision, scale);
-        //                }
-        //            }
-        //        }
-
-        //        if (fieldTypes.Count == 0)
-        //        {
-        //            throw new InvalidOperationException($"테이블 '{tableName}'에 대한 열 정보를 찾을 수 없습니다.");
-        //        }
-
-        //        string pkQuery = @"
-        //            SELECT column_name
-        //            FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS TC
-        //            JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE KU
-        //            ON TC.CONSTRAINT_NAME = KU.CONSTRAINT_NAME
-        //            WHERE TC.TABLE_NAME = @TableName AND TC.CONSTRAINT_TYPE = 'PRIMARY KEY'";
-
-        //        using (SqlCommand pkCommand = new SqlCommand(pkQuery, connection))
-        //        {
-        //            pkCommand.Parameters.AddWithValue("@TableName", tableName);
-
-        //            using (SqlDataReader reader = pkCommand.ExecuteReader())
-        //            {
-        //                while (reader.Read())
-        //                {
-        //                    primaryKeys.Add(reader["COLUMN_NAME"].ToString());
-        //                }
-
-        //                if (primaryKeys.Count == 0)
-        //                {
-        //                    throw new InvalidOperationException($"테이블 '{tableName}'에 기본 키가 존재하지 않습니다.");
-        //                }
-        //            }
-        //        }
-        //    }
-
-        //    return (fieldTypes, primaryKeys);
-        //}
-
-        //protected (Dictionary<string, string>, List<string>) GetFieldTypesAndPrimaryKeyFromDatabase1(string tableName, string connstr)
-        //{
-        //    Dictionary<string, string> fieldTypes = new Dictionary<string, string>();
-        //    List<string> primaryKeys = new List<string>();
-
-        //    using (SqlConnection connection = new SqlConnection(connstr))
-        //    {
-        //        connection.Open();
-
-        //        string columnQuery = "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = @TableName";
-        //        using (SqlCommand columnCommand = new SqlCommand(columnQuery, connection))
-        //        {
-        //            columnCommand.Parameters.AddWithValue("@TableName", tableName);
-
-        //            using (SqlDataReader reader = columnCommand.ExecuteReader())
-        //            {
-        //                while (reader.Read())
-        //                {
-        //                    string columnName = reader["COLUMN_NAME"].ToString();
-        //                    string dataType = reader["DATA_TYPE"].ToString();
-        //                    fieldTypes[columnName] = dataType;
-        //                }
-        //            }
-        //        }
-        //        // 필드 타입이 없을 경우 예외를 발생시킵니다.
-        //        if (fieldTypes.Count == 0)
-        //        {
-        //            throw new InvalidOperationException($"테이블 '{tableName}'에 대한 열 정보를 찾을 수 없습니다.");
-        //        }
-        //        string pkQuery = @"
-        //            SELECT column_name
-        //            FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS TC
-        //            JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE KU
-        //            ON TC.CONSTRAINT_NAME = KU.CONSTRAINT_NAME
-        //            WHERE TC.TABLE_NAME = @TableName AND TC.CONSTRAINT_TYPE = 'PRIMARY KEY'";
-
-        //        using (SqlCommand pkCommand = new SqlCommand(pkQuery, connection))
-        //        {
-        //            pkCommand.Parameters.AddWithValue("@TableName", tableName);
-
-        //            using (SqlDataReader reader = pkCommand.ExecuteReader())
-        //            {
-
-        //                if (reader.Read())
-        //                {
-        //                    primaryKeys.Add(reader["COLUMN_NAME"].ToString());
-        //                }
-        //                if (primaryKeys.Count == 0)
-        //                {
-        //                    // 기본 키가 없을 경우 예외를 발생시킵니다.
-        //                    throw new InvalidOperationException($"테이블 '{tableName}'에 기본 키가 존재하지 않습니다.");
-        //                }
-        //            }
-        //        }
-        //    }
-
-        //    return (fieldTypes, primaryKeys);
-        //}
         protected bool IsQuerySafe(string queryText)
         {
             string lowerQuery = queryText.ToLower();
@@ -313,7 +187,6 @@ namespace SyncLibrary
             try
             {
 
-            
                 using (SqlConnection connection = new SqlConnection(localConnectionString))
                 {
                     connection.Open();
@@ -328,6 +201,7 @@ namespace SyncLibrary
 
                     using (SqlCommand command = new SqlCommand(query, connection))
                     {
+
                         command.Parameters.AddWithValue("@BatchSize", batchSize);
 
                         using (SqlDataAdapter adapter = new SqlDataAdapter(command))

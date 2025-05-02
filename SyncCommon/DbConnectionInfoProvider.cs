@@ -16,15 +16,9 @@ namespace SyncCommon
 
         public DbConnectionInfoProvider(string SourceDBServer, DBConnInfo dBConnInfo)
         {
-            //string dbIp = "192.168.10.158";
-            //string dbport = "1616";
-            //string dbId = "eis";
-            //string dbnm = "DIO_WMS";
-            //string dbPw = "itsp@7735";
-            //_proxyServer = Setting(dbIp, dbId, dbPw, dbnm, dbport);
 
             _connectionInfoCache = new Dictionary<string, string>();
-            LoadAllConnectionInfo(dBConnInfo.GetProxyConnectionString()); //158 WMS
+            LoadAllConnectionInfo(dBConnInfo.GetProxyConnectionString());
             _proxyServer = dBConnInfo.GetProxyConnectionString();
             _localServer =GetConnectionInfo(SourceDBServer);
             
@@ -32,14 +26,6 @@ namespace SyncCommon
 
         public DbConnectionInfoProvider(string proxyConnectionString, string localConnectionString, DBConnInfo dBConnInfo)
         {
-            //string src_dbIp = "192.168.10.152";
-            //string dbIp = "192.168.10.155";
-            //string dbId = "erp";
-            //string dbPw = "itsp@7735";
-
-            //_connectionString = Setting(dbIp, dbId, dbPw, "smart_db", "1616");
-            //_localServer = localConnectionString;
-            //_proxyServer = proxyConnectionString;
             _connectionInfoCache = new Dictionary<string,string>();
             LoadAllConnectionInfo(dBConnInfo.GetProxyConnectionString());
             _proxyServer = dBConnInfo.GetProxyConnectionString();
@@ -109,7 +95,8 @@ namespace SyncCommon
             throw new Exception($"Connection info not found for source: {srcNatCd} or destination: {desNatCd}");
         }
 
-        public string Setting(string ip = "localhost", string id = "sa", string password = "1234", string dbName = "dio_implant", string port = "1433")
+        //public string Setting(string ip = "localhost", string id = "sa", string password = "1234", string dbName = "dio_implant", string port = "1433")
+        public string Setting(string ip, string id, string password, string dbName, string port)
         {
             string dbConn = "SERVER=" + ip + "," + port + ";" +
                             "DATABASE=" + dbName + ";" +
@@ -119,46 +106,6 @@ namespace SyncCommon
             return dbConn;
         }
 
-        //public (string Src_ty, string LocalConnectionString, string RemoteConnectionString) GetDbConnectionInfo(string Src_ty)
-        //{
-        //    // 여기서 DB에 접속하여 저장된 연결 정보를 읽어옵니다.
-        //    using (SqlConnection connection = new SqlConnection(_connectionString))
-        //    {
-        //        connection.Open();
-        //        // SQL 쿼리에서 SQL 인젝션을 방지하기 위해 매개변수화된 쿼리를 사용합니다.
-        //        using (SqlCommand command = new SqlCommand("SELECT src_dbip, Src_DbName, src_port, Src_Id, Src_Pw, Des_DbIp, Des_DbName, des_port, Des_Id, Des_Pw FROM ConnectionInfoTable WHERE Src_ty = @Src_ty", connection))
-        //        {
-        //            command.Parameters.AddWithValue("@Src_ty", Src_ty); // 매개변수 추가
-
-        //            using (SqlDataReader reader = command.ExecuteReader())
-        //            {
-        //                if (reader.Read())
-        //                {
-        //                    // DB에서 정보를 읽어옵니다.
-        //                    string src_dbIp = reader["src_dbip"].ToString();
-        //                    string src_dbName = reader["Src_DbName"].ToString();
-        //                    string src_port = reader["src_port"].ToString();
-        //                    string src_id = reader["Src_Id"].ToString();
-        //                    string src_pw = reader["Src_Pw"].ToString();
-
-        //                    string des_dbIp = reader["Des_DbIp"].ToString();
-        //                    string des_dbName = reader["Des_DbName"].ToString();
-        //                    string des_port = reader["des_port"].ToString();
-        //                    string des_id = reader["Des_Id"].ToString();
-        //                    string des_pw = reader["Des_Pw"].ToString();
-
-        //                    // 각 연결 문자열을 생성합니다.
-        //                    string localConnectionString = Setting(src_dbIp, src_id, src_pw, src_dbName, src_port);
-        //                    string remoteConnectionString = Setting(des_dbIp, des_id, des_pw, des_dbName, des_port);
-
-        //                    return (Src_ty, localConnectionString, remoteConnectionString);
-        //                }
-        //            }
-        //        }
-        //    }
-
-        //    throw new Exception("DB에서 연결 정보를 찾을 수 없습니다.");
-        //}
 
         
 

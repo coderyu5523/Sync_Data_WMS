@@ -37,7 +37,6 @@ namespace SyncLibrary
         
         public override async Task ProcessLogsAsync()
         {
-
             DataTable logData = LoadLogs(BatchSize);
             UpdateStatus($"Process Start - {logData.Rows.Count} 건 - {DateTime.Now}");
 
@@ -116,52 +115,6 @@ namespace SyncLibrary
             await ProcessLogsAsync();
         }
 
-        //protected void UpdateStatus(string message)
-        //{
-        //    _logger.LogInformation(message);  // 상태 업데이트를 로깅
-        //}
-
-        //protected void LogOperation(string message, string sqlQuery = null)
-        //{
-        //    _logger.LogInformation(message, sqlQuery);  // 정보성 로그
-        //}
-
-        //protected void LogError(string message, string sqlQuery = null)
-        //{
-        //    _logger.LogError(message, sqlQuery);
-        //}
-
-        //private void UpdateStatus(string message)
-        //{
-        //    StatusUpdated?.Invoke(message);
-        //}
-
-        //private void UpdateLog(string message)
-        //{
-        //    LogUpdated?.Invoke(message);
-        //}
-        //private DataTable LoadLogs(int batchSize)
-        //{
-        //    DataTable logData = new DataTable();
-
-        //    using (SqlConnection connection = new SqlConnection(localConnectionString))
-        //    {
-        //        connection.Open();
-        //        string query = "SELECT TOP (@BatchSize) LogId, TableName, ChangeType, ChangeDetails FROM WMSDataSync_ChangeLog WHERE Processed = 0";
-
-        //        using (SqlCommand command = new SqlCommand(query, connection))
-        //        {
-        //            command.Parameters.AddWithValue("@BatchSize", batchSize);
-
-        //            using (SqlDataAdapter adapter = new SqlDataAdapter(command))
-        //            {
-        //                adapter.Fill(logData);
-        //            }
-        //        }
-        //    }
-
-        //    return logData;
-        //}
 
         private async Task<bool> ApplyBatchToRemoteDatabaseAsync(DataTable logData, List<int> processedLogIds, Action<string> onSqlExecuted,string remoteConnectionString)
         {

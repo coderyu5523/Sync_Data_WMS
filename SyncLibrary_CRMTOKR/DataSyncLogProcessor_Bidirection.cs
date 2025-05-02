@@ -15,7 +15,7 @@ namespace SyncLibrary
         private readonly SyncTaskJob _syncTaskJob;
         private const int BatchSize = 2000; // 배치로 처리할 로그 수
         private readonly SqlLogger _logger;
-
+       
         public DataSyncLogProcessor_Bidirection(SqlLogger logger, DbConnectionInfoProvider dbConnectionInfoProvider, SyncTaskJob syncTaskJob)
             : base(logger, dbConnectionInfoProvider, syncTaskJob)
         {
@@ -26,126 +26,94 @@ namespace SyncLibrary
 
         public override async Task ProcessLogsAsync()
         {
+
             DataTable logData = LoadLogs(BatchSize);
+
             if (logData.Rows.Count == 0)
             {
+
                 LogOperation("No logs to process.");
                 return;
             }
 
             string currentSqlQuery = null;
             var tasks = new List<Task>();
+
             var rows = logData.AsEnumerable().ToList();
+
             try
             {
-                // 각 국가 그룹에 대해 비동기적으로 처리
-                //foreach (var row in rows)
-                //{
-                //string countryCode = group.Key;
-                    
-                    //tasks.Add(Task.Run(async () =>
-                    //{
-                    // 국가 코드에 따른 연결 정보 설정
-                        var (localConnectionString, remoteConnectionString) = _dbConnectionInfoProvider.GetConnectionInfo(
+
+                // 국가 코드에 따른 연결 정보 설정
+                var (localConnectionString, remoteConnectionString) = _dbConnectionInfoProvider.GetConnectionInfo(
                             _syncTaskJob.SourceDB,
                             _syncTaskJob.TargetDB);
 
-                        // 새로운 DataTable 생성
-                        DataTable newTable = logData.Clone(); // 구조 복사
+                // 새로운 DataTable 생성
+                DataTable newTable = logData.Clone(); // 구조 복사
 
-                        // 기존 행을 새로운 DataTable로 가져옴
-                        //newTable.ImportRow(row);
+                // 기존 행을 새로운 DataTable로 가져옴
+                //newTable.ImportRow(row);
 
-                        // 각 국가 그룹의 데이터를 처리
-                        bool success = await ApplyBatchToTempTableAndExecuteProcedureAsync(logData, remoteConnectionString);
-                        //if (success)
-                        //{
-                        //    LogOperation($"Data synchronization completed successfully.");
-                        //}
-                        //else
-                        //{
-                        //    LogOperation($"Data synchronization failed.");
-                        //}
-                    //}));
-                //}
-
-                // 모든 작업이 완료될 때까지 대기
-                //await Task.WhenAll(tasks);
+                // 각 국가 그룹의 데이터를 처리
+                bool success = await ApplyBatchToTempTableAndExecuteProcedureAsync(logData, remoteConnectionString);
+          
             }
             catch (Exception ex)
             {
+                Console.WriteLine("1515");
+
                 //_logger.LogError($"Error processing batch: {ex.Message}", currentSqlQuery);
                 throw;
             //    //UpdateStatus($"Error: {ex.Message}");
             }
         }
 
-        //public override async Task ProcessLogsAsync1()
-        //{
-        //    DataTable logData = LoadLogs(BatchSize);
-        //    if (logData.Rows.Count == 0)
-        //    {
-        //        LogOperation("No logs to process.");
-        //        return;
-        //    }
-
-        //    // 국가별로 데이터를 그룹화
-        //    var groupedData = logData.AsEnumerable()
-        //        .GroupBy(row => row["Srt_Svr"].ToString())
-        //        .ToList();
-
-        //    // 각 국가 그룹에 대해 순차적으로 처리
-        //    foreach (var group in groupedData)
-        //    {
-        //        string countryCode = group.Key;
-
-        //        // 국가 코드에 따른 연결 정보 설정
-        //        var (localConnectionString, remoteConnectionString) = _dbConnectionInfoProvider.GetConnectionInfo(group.First()["Srt_Svr"].ToString(), group.First()["Des_Svr"].ToString());
-
-        //        // 각 국가 그룹의 데이터를 처리
-        //        bool success = await ApplyBatchToTempTableAndExecuteProcedureAsync(group.CopyToDataTable(), remoteConnectionString);
-        //        if (success)
-        //        {
-        //            LogOperation($"Data synchronization completed successfully for {countryCode}.");
-        //        }
-        //        else
-        //        {
-        //            LogOperation($"Data synchronization failed for {countryCode}.");
-        //        }
-        //    }
-        //}
+      
 
         private async Task<bool> ApplyBatchToTempTableAndExecuteProcedureAsync(DataTable logData, string remoteConnectionString)
         {
+
             using (SqlConnection connection = new SqlConnection(remoteConnectionString))
             {
+
                 if (!IsConnectionActive(connection))
                 {
+
                     UpdateStatus("Destination database connection is inactive. Retrying in next cycle.");
                     return false;
                 }
                 await connection.OpenAsync();
 
+
                 using (SqlTransaction transaction = connection.BeginTransaction())
                 {
+
                     try
                     {
+
                         List<int> processedLogIds = new List<int>();
 
                         // 임시 테이블에 데이터 저장
                         bool isTempTableUpdateSuccessful = await ApplyBatchToTempTableAsync(logData, connection, transaction, processedLogIds);
+                        Console.WriteLine("isTempTableUpdateSuccessful :" + isTempTableUpdateSuccessful);
+
 
                         // 임시 테이블에 데이터 저장이 성공한 경우에만 저장 프로시저 호출
                         if (isTempTableUpdateSuccessful)
                         {
+
                             //프로시저가 없는 경우 프로시저 호출은 하지 않는다.
-                            if(_syncTaskJob.ProcedureName !="" && _syncTaskJob.ProcedureName != null)
-                            { 
+                            if (_syncTaskJob.ProcedureName !="" && _syncTaskJob.ProcedureName != null)
+                            {
+
                                 await ExecuteStoredProcedureAsync(connection, transaction);
                             }
+
                             // 처리된 로그의 상태를 업데이트
                             if (processedLogIds == null || processedLogIds.Count == 0)
                             {
+
                                 throw new Exception("No logs processed. Cannot update log status.");
                             }
 
@@ -268,19 +236,7 @@ namespace SyncLibrary
                     await command.ExecuteNonQueryAsync();
                 }
             }
-            //catch (SqlException sqlEx)
-            //{
-            //    transaction.Rollback();
-            //    _logger.LogError($"SQL 오류 발생: {sqlEx.Message}", sqlEx.ToString());
-            //    UpdateStatus($"SQL 오류: {sqlEx.Message}");
-            //    throw;
-            //}
-            //catch (InvalidOperationException invEx)
-            //{
-            //    _logger.LogError($"유효성 검사 오류 발생: {invEx.Message}", invEx.ToString());
-            //    UpdateStatus($"유효성 오류: {invEx.Message}");
-            //    throw;
-            //}
+          
             catch (Exception ex)
             {
                 _logger.LogError($"Stored Procedure 실행 중 오류 발생: {ex.Message}", ex.ToString());
@@ -289,29 +245,6 @@ namespace SyncLibrary
             }
         }
 
-        //private void LogOperation(string message)
-        //{
-        //    _logger.LogOperation(message);
-        //}
-
-        //private void UpdateStatus(string message)
-        //{
-        //    // 상태 업데이트 로직 추가
-        //}
-
-        //protected void UpdateStatus(string message)
-        //{
-        //    _logger.LogInformation(message);  // 상태 업데이트를 로깅
-        //}
-
-        //protected void LogOperation(string message, string sqlQuery = null)
-        //{
-        //    _logger.LogInformation(message, sqlQuery);  // 정보성 로그
-        //}
-
-        //protected void LogError(string message, string sqlQuery = null)
-        //{
-        //    _logger.LogError(message, sqlQuery);
-        //}
+     
     }
 }
