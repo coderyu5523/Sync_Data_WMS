@@ -33,10 +33,9 @@ namespace SyncLibrary
             if (_syncTaskJob.ReferenceTables != null && _syncTaskJob.ReferenceTables.Count > 0)
             {
                 table = _syncTaskJob.ReferenceTables[0];
-                
             }
             _syncTaskJob.TargetTable = table;
-            DataTable sourceData = await LoadTableDataAsync(_dbConnectionInfoProvider.LocalServer(), table,false); // 원본 테이블의 전체 데이터 로드
+            DataTable sourceData = await LoadTableDataAsync(_dbConnectionInfoProvider.LocalServer(), table, false); // 원본 테이블의 전체 데이터 로드
             if (sourceData.Rows.Count == 0)
             {
                 UpdateStatus("No data to process.");
@@ -51,32 +50,100 @@ namespace SyncLibrary
                     _syncTaskJob.TargetDB);
 
                 // 대상 테이블에서 기존 데이터를 읽어옴
-                DataTable targetData = await LoadTableDataAsync(remoteConnectionString, table,true);
+                DataTable targetData = await LoadTableDataAsync(remoteConnectionString, table, true);
 
                 Dictionary<string, (string DataType, int? MaxLength, int? Precision, int? Scale)> fieldTypes = null;
-
                 List<string> primaryKeys = new List<string>();
 
                 (fieldTypes, primaryKeys) = GetFieldTypesAndPrimaryKeyFromDatabase(table, localConnectionString);
 
                 //원본테이블이 대상 테이블컬럼보다 많은 경우 컬럼 생성구문
                 AddMissingColumnsAsync(sourceData, targetData, table, remoteConnectionString);
-                // 원본 데이터와 대상 데이터를 비교하여 차이점만 처리
-                bool success = await SyncTableDataWithUpsertAsync(sourceData, targetData, fieldTypes, primaryKeys, remoteConnectionString);
 
-                if (success)
+                // 소스 DB와 타겟 DB 모두에 대한 트랜잭션 시작
+                using (SqlConnection sourceConnection = new SqlConnection(localConnectionString))
+                using (SqlConnection targetConnection = new SqlConnection(remoteConnectionString))
                 {
-                    UpdateStatus("Data sync completed successfully.");
-                }
-                else
-                {
-                    UpdateStatus("Data sync failed.");
+                    await sourceConnection.OpenAsync();
+                    await targetConnection.OpenAsync();
+
+                    using (SqlTransaction sourceTransaction = sourceConnection.BeginTransaction())
+                    using (SqlTransaction targetTransaction = targetConnection.BeginTransaction())
+                    {
+                        try
+                        {
+                            // 원본 데이터와 대상 데이터를 비교하여 차이점만 처리
+                            bool success = await SyncTableDataWithUpsertAsync(sourceData, targetData, fieldTypes, primaryKeys, remoteConnectionString, targetTransaction);
+                            
+                            if (success)
+                            {
+                                // 소스 DB 업데이트
+                                await UpdateSourceDataAsync(sourceData, targetData, fieldTypes, primaryKeys, sourceConnection, sourceTransaction);
+                                
+                                // 두 트랜잭션 모두 커밋
+                                sourceTransaction.Commit();
+                                targetTransaction.Commit();
+                                
+                                UpdateStatus("Data sync completed successfully.");
+                            }
+                            else
+                            {
+                                // 실패 시 롤백
+                                sourceTransaction.Rollback();
+                                targetTransaction.Rollback();
+                                UpdateStatus("Data sync failed.");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            // 예외 발생 시 롤백
+                            sourceTransaction.Rollback();
+                            targetTransaction.Rollback();
+                            throw;
+                        }
+                    }
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError($"Error processing logs: {ex.Message}", currentSqlQuery);
                 throw;
+            }
+        }
+
+        private async Task UpdateSourceDataAsync(DataTable sourceData, DataTable targetData, 
+            Dictionary<string, (string DataType, int? MaxLength, int? Precision, int? Scale)> fieldTypes,
+            List<string> primaryKeys, SqlConnection connection, SqlTransaction transaction)
+        {
+            foreach (DataRow sourceRow in sourceData.Rows)
+            {
+                var targetRow = targetData.AsEnumerable()
+                    .FirstOrDefault(r => primaryKeys.All(pk => r[pk].ToString() == sourceRow[pk].ToString()));
+
+                if (targetRow != null)
+                {
+                    // STATUS가 'N'인 경우에만 'S'로 업데이트
+                    if (sourceRow["STATUS"].ToString() == "N")
+                    {
+                        var whereClauses = new List<string>();
+                        var parameters = new List<SqlParameter>();
+
+                        // WHERE 절에 복합 기본 키 처리
+                        foreach (var pk in primaryKeys)
+                        {
+                            whereClauses.Add($"{pk} = @{pk}");
+                            parameters.Add(new SqlParameter($"@{pk}", sourceRow[pk]));
+                        }
+
+                        string query = $"UPDATE {_syncTaskJob.TargetTable} SET STATUS = 'S', UPD_DT = GETDATE() WHERE {string.Join(" AND ", whereClauses)}";
+
+                        using (SqlCommand command = new SqlCommand(query, connection, transaction))
+                        {
+                            command.Parameters.AddRange(parameters.ToArray());
+                            await command.ExecuteNonQueryAsync();
+                        }
+                    }
+                }
             }
         }
 
@@ -139,76 +206,72 @@ namespace SyncLibrary
         }
         private static SemaphoreSlim semaphore = new SemaphoreSlim(3);
         // 원본 데이터와 대상 데이터를 비교하여 차이점만 처리하는 메서드 (Insert, Update, Delete)
-        private async Task<bool> SyncTableDataWithUpsertAsync(DataTable sourceData, DataTable targetData, Dictionary<string, (string DataType, int? MaxLength, int? Precision, int? Scale)> fieldTypes ,List<string> primaryKeys, string remoteConnectionString)
+        private async Task<bool> SyncTableDataWithUpsertAsync(DataTable sourceData, DataTable targetData, 
+            Dictionary<string, (string DataType, int? MaxLength, int? Precision, int? Scale)> fieldTypes,
+            List<string> primaryKeys, string remoteConnectionString, SqlTransaction targetTransaction)
         {
             try
             {
-                // 임시 테이블명 설정
-                string tempTableName = _syncTaskJob.TargetTable + "_Temp";
                 using (SqlConnection connection = new SqlConnection(remoteConnectionString))
                 {
                     await connection.OpenAsync();
-                    using (SqlTransaction transaction = connection.BeginTransaction())
+                    
+                    // 트랜잭션이 제공되지 않은 경우 새로 시작
+                    if (targetTransaction == null)
                     {
-                        try
+                        using (targetTransaction = connection.BeginTransaction())
                         {
-                            string dropTempTableQuery = $"DROP TABLE IF EXISTS {tempTableName}";
-                            using (SqlCommand dropCommand = new SqlCommand(dropTempTableQuery, connection, transaction))
-                            {
-                                await dropCommand.ExecuteNonQueryAsync();
-                            }
-
-                            // 1. _Temp 테이블 생성
-                            string createTempTableQuery = GenerateCreateTempTableQuery(tempTableName, fieldTypes, primaryKeys);
-                            using (SqlCommand createTempTableCmd = new SqlCommand(createTempTableQuery, connection, transaction))
-                            {
-                                await createTempTableCmd.ExecuteNonQueryAsync();
-                            }
-
-                            // 2. sourceData를 _Temp 테이블에 삽입
-                            await BulkInsertToTempTableAsync(connection, transaction, tempTableName, sourceData,300000);
-
-                            // 3. _Temp 테이블과 대상 테이블을 MERGE
-                            string mergeQuery = GenerateMergeQuery(tempTableName, _syncTaskJob.TargetTable, fieldTypes, primaryKeys, excludedField: "status,,row_status");
-                            using (SqlCommand mergeCmd = new SqlCommand(mergeQuery, connection, transaction))
-                            {
-                                // CommandTimeout 값을 600초(10분)로 설정 (필요에 따라 변경 가능)
-                                mergeCmd.CommandTimeout = 600;
-                                await mergeCmd.ExecuteNonQueryAsync();
-                            }
-
-                            // 4. 트랜잭션 커밋
-                            transaction.Commit();
-                            return true;
-
-
-                          
-                        }
-                        catch (Exception ex)
-                        {
-                            // 트랜잭션 롤백
-                            transaction.Rollback();
-                            _logger.LogError($"Sync Table Merge {_syncTaskJob.TargetTable}  SQL오류: {ex.Message}");
-                            Console.WriteLine($"Sync Table Merge {_syncTaskJob.TargetTable} SQL오류: {ex.Message}");
-                            //_logger.LogError($"SQL 오류 발생: {sqlEx.Message}", sqlEx.ToString());
-                            throw;
-                        }
-                        finally
-                        {
-                            // 6. Temp 테이블 삭제
-                            //string dropTempTableQuery = $"DROP TABLE IF EXISTS {tempTableName}";
-                            //using (SqlCommand dropCommand = new SqlCommand(dropTempTableQuery, connection))
-                            //{
-                            //    await dropCommand.ExecuteNonQueryAsync();
-                            //}
+                            await ProcessDataChangesAsync(sourceData, targetData, fieldTypes, primaryKeys, connection, targetTransaction);
+                            targetTransaction.Commit();
                         }
                     }
+                    else
+                    {
+                        // 제공된 트랜잭션 사용
+                        await ProcessDataChangesAsync(sourceData, targetData, fieldTypes, primaryKeys, connection, targetTransaction);
+                    }
                 }
+                return true;
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Sync failed: {ex.Message}");
-                throw;
+                _logger.LogError($"Error in SyncTableDataWithUpsertAsync: {ex.Message}");
+                return false;
+            }
+        }
+
+        private async Task ProcessDataChangesAsync(DataTable sourceData, DataTable targetData,
+            Dictionary<string, (string DataType, int? MaxLength, int? Precision, int? Scale)> fieldTypes,
+            List<string> primaryKeys, SqlConnection connection, SqlTransaction transaction)
+        {
+            // 삭제할 레코드 찾기
+            var recordsToDelete = targetData.AsEnumerable()
+                .Where(targetRow => !sourceData.AsEnumerable()
+                    .Any(sourceRow => primaryKeys.All(pk => sourceRow[pk].ToString() == targetRow[pk].ToString())))
+                .ToList();
+
+            // 삭제 실행
+            foreach (var row in recordsToDelete)
+            {
+                await DeleteRecordAsync(connection, row, _syncTaskJob.TargetTable, primaryKeys, transaction);
+            }
+
+            // 업데이트 및 삽입
+            foreach (DataRow sourceRow in sourceData.Rows)
+            {
+                var targetRow = targetData.AsEnumerable()
+                    .FirstOrDefault(r => primaryKeys.All(pk => r[pk].ToString() == sourceRow[pk].ToString()));
+
+                if (targetRow != null)
+                {
+                    // 업데이트
+                    await UpdateRecordAsync(connection, sourceRow, targetRow, _syncTaskJob.TargetTable, primaryKeys, transaction);
+                }
+                else
+                {
+                    // 삽입
+                    await InsertRecordAsync(connection, sourceRow, _syncTaskJob.TargetTable, fieldTypes, transaction);
+                }
             }
         }
 
@@ -462,6 +525,80 @@ namespace SyncLibrary
             return data;
         }
 
+        private async Task DeleteRecordAsync(SqlConnection connection, DataRow row, string tableName, List<string> primaryKeys, SqlTransaction transaction)
+        {
+            var whereClauses = new List<string>();
+            var parameters = new List<SqlParameter>();
 
+            foreach (var pk in primaryKeys)
+            {
+                whereClauses.Add($"{pk} = @{pk}");
+                parameters.Add(new SqlParameter($"@{pk}", row[pk]));
+            }
+
+            string query = $"DELETE FROM {tableName} WHERE {string.Join(" AND ", whereClauses)}";
+
+            using (SqlCommand command = new SqlCommand(query, connection, transaction))
+            {
+                command.Parameters.AddRange(parameters.ToArray());
+                await command.ExecuteNonQueryAsync();
+            }
+        }
+
+        private async Task UpdateRecordAsync(SqlConnection connection, DataRow sourceRow, DataRow targetRow, string tableName, List<string> primaryKeys, SqlTransaction transaction)
+        {
+            var setClauses = new List<string>();
+            var parameters = new List<SqlParameter>();
+
+            foreach (DataColumn column in sourceRow.Table.Columns)
+            {
+                if (!primaryKeys.Contains(column.ColumnName))
+                {
+                    // 업데이트할 컬럼을 정의 (기본 키는 제외)
+                    setClauses.Add($"{column.ColumnName} = @{column.ColumnName}");
+                    parameters.Add(new SqlParameter($"@{column.ColumnName}", sourceRow[column]));
+                }
+            }
+
+            // WHERE 절에 복합 기본 키 처리
+            var whereClauses = new List<string>();
+            foreach (var pk in primaryKeys)
+            {
+                whereClauses.Add($"{pk} = @{pk}");
+                parameters.Add(new SqlParameter($"@{pk}", sourceRow[pk]));
+            }
+
+            string query = $"UPDATE {tableName} SET {string.Join(", ", setClauses)} WHERE {string.Join(" AND ", whereClauses)}";
+
+            using (SqlCommand command = new SqlCommand(query, connection, transaction))
+            {
+                command.Parameters.AddRange(parameters.ToArray());
+                await command.ExecuteNonQueryAsync();
+            }
+        }
+
+        private async Task InsertRecordAsync(SqlConnection connection, DataRow row, string tableName, 
+            Dictionary<string, (string DataType, int? MaxLength, int? Precision, int? Scale)> fieldTypes, 
+            SqlTransaction transaction)
+        {
+            var columns = new List<string>();
+            var parameters = new List<SqlParameter>();
+            var parameterNames = new List<string>();
+
+            foreach (DataColumn column in row.Table.Columns)
+            {
+                columns.Add(column.ColumnName);
+                parameterNames.Add($"@{column.ColumnName}");
+                parameters.Add(new SqlParameter($"@{column.ColumnName}", row[column]));
+            }
+
+            string query = $"INSERT INTO {tableName} ({string.Join(", ", columns)}) VALUES ({string.Join(", ", parameterNames)})";
+
+            using (SqlCommand command = new SqlCommand(query, connection, transaction))
+            {
+                command.Parameters.AddRange(parameters.ToArray());
+                await command.ExecuteNonQueryAsync();
+            }
+        }
     }
 }
